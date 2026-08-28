@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ImportadosNYec — Moda & Tech Ecuador</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- Google Analytics (GA4) — reemplaza G-XXXXXXXXXX por tu ID de medición real -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script>
 <link rel="manifest" href="#" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1345,6 +1354,7 @@ let products = [
 
 let orders = [];    // Se cargan desde Google Sheets al abrir
 let customers = []; // Se cargan desde Google Sheets al abrir
+let totalVisits = 0; // Se carga desde Google Sheets al abrir
 
 let cart = [];
 let editingProductId = null;
@@ -1844,6 +1854,7 @@ function renderAdminStats() {
     <div class="stat-card"><div class="stat-label">🕐 Pendientes</div><div class="stat-value">${pending}</div><div class="stat-change ${pending > 2 ? 'down' : 'up'}">${pending} por procesar</div></div>
     <div class="stat-card"><div class="stat-label">📦 Productos</div><div class="stat-value">${products.length}</div><div class="stat-change up">${products.filter(p=>p.badge==='new').length} nuevos</div></div>
     <div class="stat-card"><div class="stat-label">👥 Clientes</div><div class="stat-value">${customers.length}</div><div class="stat-change up">Registrados</div></div>
+    <div class="stat-card"><div class="stat-label">👀 Visitas Totales</div><div class="stat-value">${totalVisits}</div><div class="stat-change up">Desde que activaste el conteo</div></div>
     <div class="stat-card"><div class="stat-label">🏷️ Total Precio (Inventario)</div><div class="stat-value">$${totalPriceValue.toFixed(2)}</div><div class="stat-change up">Precio × stock de todo tu inventario</div></div>
     <div class="stat-card"><div class="stat-label">💵 Total Costo (Inventario)</div><div class="stat-value">$${totalCost.toFixed(2)}</div><div class="stat-change up">Costo × stock de todo tu inventario</div></div>
     <div class="stat-card"><div class="stat-label">📊 Total Ganancia (Inventario)</div><div class="stat-value">$${totalProfitInventory.toFixed(2)}</div><div class="stat-change up">Si vendes todo el stock actual</div></div>
@@ -2044,7 +2055,8 @@ async function updateSheetRow(action, data) {
   // reemplaza la validación del token en el propio Apps Script — ver
   // apps-script-seguridad.md para el cambio que falta hacer en el servidor.
   const payload = { action, ...data };
-  if (action !== 'createOrder') {
+  const CLIENT_PUBLIC_ACTIONS = ['createOrder', 'logVisit'];
+  if (!CLIENT_PUBLIC_ACTIONS.includes(action)) {
     const token = sessionStorage.getItem('adminToken');
     if (!token) {
       console.error('Bloqueado: acción administrativa sin sesión activa:', action);
@@ -3481,12 +3493,13 @@ async function loadFromSheets() {
 
   try {
     // Cargar las 3 hojas en paralelo
-    const [ordersRes, productsRes, customersRes, configRes, catsRes] = await Promise.all([
+    const [ordersRes, productsRes, customersRes, configRes, catsRes, visitsRes] = await Promise.all([
       fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Pedidos', { mode: 'cors' }).catch(() => null),
       fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Productos', { mode: 'cors' }).catch(() => null),
       fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Clientes', { mode: 'cors' }).catch(() => null),
       fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Configuracion', { mode: 'cors' }).catch(() => null),
-      fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Categorias', { mode: 'cors' }).catch(() => null)
+      fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Categorias', { mode: 'cors' }).catch(() => null),
+      fetch(APPS_SCRIPT_URL + '?action=getSheet&sheet=Visitas', { mode: 'cors' }).catch(() => null)
     ]);
 
     // Procesar Pedidos
@@ -3580,6 +3593,22 @@ async function loadFromSheets() {
           }
         }
       } catch(e) { console.warn('Error cargando categorías:', e); }
+    }
+
+    // Procesar Visitas
+    if (visitsRes && visitsRes.ok) {
+      try {
+        const data = await visitsRes.json();
+        totalVisits = (data && data.rows) ? data.rows.length : 0;
+      } catch(e) { console.warn('Error cargando visitas:', e); }
+    }
+
+    // Registrar esta visita (una vez por pestaña/sesión del navegador, para no inflar el conteo con recargas)
+    if (!sessionStorage.getItem('visitLogged')) {
+      sessionStorage.setItem('visitLogged', '1');
+      const now = new Date();
+      updateSheetRow('logVisit', { fecha: now.toLocaleDateString('es-EC'), hora: now.toLocaleTimeString('es-EC') });
+      totalVisits++; // reflejar de inmediato en el panel sin esperar recarga
     }
 
     showToast('✓ Datos cargados desde Google Sheets');
